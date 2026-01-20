@@ -482,8 +482,8 @@ def main():
     pixhawk = Pixhawk()
     camera = Camera()
     classifier = PinyaSuriAI()
-    metrics = FlightMetricsLogger(flight_number=next_flight_number)
     next_flight_number = get_next_daily_flight_number()
+    metrics = FlightMetricsLogger(flight_number=next_flight_number)
     was_armed = False
 
     logger.info("=" * 60)
