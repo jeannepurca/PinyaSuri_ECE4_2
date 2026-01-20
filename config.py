@@ -99,7 +99,7 @@ BURST_INTERVAL = 0.5
 # OBJECT DETECTION CONFIGURATION  
 # ============================================================================  
 SERVER = "http://WEB_SERVER_IP:5000"
-MODEL_PATH = MODEL_DIR / "pinyasuri_detector.tflite"  # Object detection model
+MODEL_PATH = MODEL_DIR / "YOLOv8n_PinyaSuri_AI (2).tflite"  # Object detection model
 
 # Detection threshold - only report detections above this confidence
 DETECTION_THRESHOLD = 0.5  # 50% confidence minimum
