@@ -6,9 +6,9 @@ import csv
 import logging
 import sys
 from pathlib import Path
-import config
-
 import json
+import config
+import uploader
 from logging_config import setup_logging
 from pixhawk import Pixhawk
 from camera import Camera
@@ -42,8 +42,8 @@ def initialize_image_log():
 
 def initialize_detection_csv():
     """Create detection CSV with headers if not exists"""
-    if not config.DETECTION_CSV.exists():
-        with open(config.DETECTION_CSV, "w", newline="") as f:
+    if not config.CLASSIFICATION_CSV.exists():
+        with open(config.CLASSIFICATION_CSV, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
                 "timestamp",
@@ -74,7 +74,7 @@ def log_detections(flight_id, flight_number, waypoint, position, burst_id, burst
                    detections, image_path, logger):
     """Log all detections from a single frame to CSV"""
     try:
-        with open(config.DETECTION_CSV, "a", newline="") as f:
+        with open(config.CLASSIFICATION_CSV, "a", newline="") as f:
             writer = csv.writer(f)
             
             for det_idx, det in enumerate(detections):
@@ -105,6 +105,10 @@ def log_detections(flight_id, flight_number, waypoint, position, burst_id, burst
                     y2_px,
                     image_path
                 ])
+        
+        # Also add to uploader for JSON summary
+        uploader.add_detection_to_flight(flight_id, waypoint, image_path, detections)
+        
     except Exception as e:
         logger.error(f"Failed to log detections: {e}")
 
@@ -189,7 +193,7 @@ def handle_waypoint_streaming_detection(pixhawk, camera, classifier, metrics, wa
                     "image_path": image_path
                 })
                 
-                # Log each detection to CSV
+                # Log each detection to CSV and uploader
                 log_detections(
                     metrics.flight_id,
                     flight_number,
@@ -402,8 +406,15 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
         if pixhawk.armed and (time.time() - last_debug_time) > 2.0:
             last_debug_time = time.time()
             dist_str = f"{pixhawk.wp_dist:.2f}m" if pixhawk.wp_dist else "N/A"
+            
+            # ✅ FIX: Check if position exists before accessing
+            if pixhawk.position:
+                alt_str = f"{pixhawk.position['rel_alt']:.1f}m"
+            else:
+                alt_str = "N/A"
+            
             logger.debug(f"[STATUS] Mode: {pixhawk.mode}, WP: {pixhawk.last_wp}, "
-                        f"Alt: {pixhawk.position['rel_alt']:.1f}m, "
+                        f"Alt: {alt_str}, "
                         f"Dist to WP: {dist_str}, "
                         f"Captured: {captured_wp}")
 
@@ -411,7 +422,7 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
         wp = pixhawk.current_waypoint or {"lat": None, "lon": None, "alt": None}
 
         # Update metrics during flight
-        if pixhawk.armed:
+        if pixhawk.armed and pixhawk.position:  # ✅ FIX: Added position check
             telemetry = {
                 "attitude": {
                     "roll": getattr(pixhawk, "roll", 0.0),
@@ -426,13 +437,12 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
                     "groundspeed": pixhawk.groundspeed
                 },
                 "waypoint_index": pixhawk.last_wp,
-                "waypoint_index": pixhawk.last_wp,
                 "waypoint_lat": wp["lat"],
                 "waypoint_lon": wp["lon"],
                 "waypoint_alt": wp["alt"],
                 "flight_mode": pixhawk.mode,
                 "nav_state": pixhawk.nav_state,
-                "is_hovering": pixhawk.is_hovering(threshold=1.0),
+                "is_hovering": pixhawk.is_hovering(threshold=config.HOVER_SPEED_THRESHOLD),
             }
             metrics.log_telemetry(telemetry)
 
@@ -448,7 +458,7 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
     
     return was_armed
 
-def cleanup(camera, pixhawk, classifier, metrics, was_armed, logger):
+def cleanup(camera, pixhawk, metrics, was_armed, logger):
     """Clean up resources before exit"""
     logger.info("=" * 60)
     logger.info("⚠ INITIATING SHUTDOWN ⚠")
@@ -458,6 +468,13 @@ def cleanup(camera, pixhawk, classifier, metrics, was_armed, logger):
     if was_armed:
         logger.info(">>> Finalizing flight metrics...")
         metrics.end_flight()
+        
+        # Generate flight summary JSON
+        total_waypoints = pixhawk.get_last_waypoint() if pixhawk else 0
+        logger.info(">>> Generating flight summary...")
+        summary_path = uploader.finalize_flight_summary(metrics.flight_id, total_waypoints)
+        if summary_path:
+            logger.info(f"✓ Flight summary created: {summary_path}")
 
     # Cleanup camera
     try:
@@ -473,22 +490,29 @@ def cleanup(camera, pixhawk, classifier, metrics, was_armed, logger):
     except Exception as e:
         logger.warning(f"⚠ Error closing Pixhawk: {e} ⚠")
     
+    uploader.stop_upload_queue()
     logger.info("✓ Shutdown complete.")
 
 def main():
     global running
     
     logger = setup_logging()
-    
-    # SET DEBUG LEVEL
     logger.setLevel(logging.INFO)
     
+    uploader.start_upload_queue()
     pixhawk = Pixhawk()
     camera = Camera()
-    classifier = PinyaSuriAI()
+
+    logger.info(">>> Initializing AI detector...")
+    try:
+        classifier = PinyaSuriAI()
+    except Exception as e:
+        logger.error(f"⚠️ Failed to initialize AI detector: {e}")
+        logger.error("   System will continue without AI detection")
+        classifier = None
+
     next_flight_number = get_next_daily_flight_number()
     metrics = FlightMetricsLogger(flight_number=next_flight_number)
-    was_armed = False
 
     logger.info("=" * 60)
     logger.info("🍍 PINYASURI FLIGHT SYSTEM 🚁")
@@ -498,6 +522,7 @@ def main():
     try:
         pixhawk.wait_for_connection()
         pixhawk.request_mission_count()
+        pixhawk.request_mission_waypoints()
         initialize_image_log()
         initialize_detection_csv()
         was_armed = main_loop(pixhawk, camera, classifier, metrics, logger)
@@ -515,10 +540,7 @@ def main():
         was_armed = False
         
     finally:
-        if all([camera, pixhawk, classifier, metrics]):
-            cleanup(camera, pixhawk, classifier, metrics, was_armed, logger)
-        else:
-            logger.warning("⚠ Cleanup skipped - some components failed to initialize")
+        cleanup(camera, pixhawk, metrics, was_armed, logger)
 
 if __name__ == "__main__":
     main()

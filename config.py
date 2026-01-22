@@ -117,13 +117,13 @@ DETECTION_THRESHOLD = 0.5
 # Non-Maximum Suppression threshold
 NMS_IOU_THRESHOLD = 0.5  # Remove overlapping boxes with IoU > 0.5
 
-# Visualization settings (for future use)
+# Visualization settings
 DRAW_BBOXES = True  # Draw bounding boxes on saved images
 BBOX_THICKNESS = 2
 FONT_SCALE = 0.6
 
 # Class names - MUST match your training labels in exact order
-DEFAULT_CLASS_NAMES = {
+CLASS_NAMES = {
     0: "Crown Rot Disease",
     1: "Fruit Fasciation Disorder",
     2: "Fruit Rot Disease",
@@ -151,12 +151,12 @@ def get_class_name(index: int, class_names: dict = None) -> str:
     Args:
         index: Class index
         class_names: Optional dictionary of class names (from model metadata)
-                    If None, uses DEFAULT_CLASS_NAMES
+                    If None, uses CLASS_NAMES
     
     Returns:
         Class name string
     """
-    names = class_names if class_names is not None else DEFAULT_CLASS_NAMES
+    names = class_names if class_names is not None else CLASS_NAMES
     return names.get(index, f"unknown_{index}")
 
 def get_class_color(index: int) -> tuple:
