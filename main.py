@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# main.py - STREAMING INFERENCE VERSION
+# main_stream.py - STREAMING INFERENCE VERSION
 
 import time
 import csv
@@ -7,6 +7,8 @@ import logging
 import sys
 from pathlib import Path
 import config
+
+import json
 from logging_config import setup_logging
 from pixhawk import Pixhawk
 from camera import Camera
@@ -19,7 +21,7 @@ running = True
 # ----------------------------
 # CSV Initialization
 # ----------------------------
-def initialize_csv():
+def initialize_image_log():
     """Create image log CSV with headers if file doesn't exist"""
     if not config.IMAGE_LOG_CSV.exists():
         with open(config.IMAGE_LOG_CSV, "w", newline="") as f:
@@ -255,7 +257,6 @@ def get_telemetry_dict(pixhawk):
         "lat": pixhawk.position["lat"],
         "lon": pixhawk.position["lon"],
         "imu_accel": pixhawk.imu_accel,
-        "battery_remaining": pixhawk.battery_remaining
     }
 
 def handle_arm_state_change(pixhawk, metrics, was_armed, flight_number, captured_wp, logger):
@@ -406,6 +407,9 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
                         f"Dist to WP: {dist_str}, "
                         f"Captured: {captured_wp}")
 
+        # Safe Waypoint Guard
+        wp = pixhawk.current_waypoint or {"lat": None, "lon": None, "alt": None}
+
         # Update metrics during flight
         if pixhawk.armed:
             telemetry = {
@@ -422,13 +426,13 @@ def main_loop(pixhawk, camera, classifier, metrics, logger):
                     "groundspeed": pixhawk.groundspeed
                 },
                 "waypoint_index": pixhawk.last_wp,
+                "waypoint_index": pixhawk.last_wp,
+                "waypoint_lat": wp["lat"],
+                "waypoint_lon": wp["lon"],
+                "waypoint_alt": wp["alt"],
                 "flight_mode": pixhawk.mode,
+                "nav_state": pixhawk.nav_state,
                 "is_hovering": pixhawk.is_hovering(threshold=1.0),
-                "battery": {
-                    "voltage": pixhawk.battery_voltage,
-                    "current": pixhawk.battery_current,
-                    "percentage": pixhawk.battery_remaining
-                }
             }
             metrics.log_telemetry(telemetry)
 
@@ -494,7 +498,7 @@ def main():
     try:
         pixhawk.wait_for_connection()
         pixhawk.request_mission_count()
-        initialize_csv()
+        initialize_image_log()
         initialize_detection_csv()
         was_armed = main_loop(pixhawk, camera, classifier, metrics, logger)
     except KeyboardInterrupt:

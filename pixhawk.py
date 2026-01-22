@@ -26,8 +26,6 @@ class Pixhawk:
 
         # Sensors
         self.imu_accel = {"x": 0.0, "y": 0.0, "z": 0.0}
-        self.battery_remaining = 0
-        self.battery_type = None
         self.groundspeed = 0.0
 
         # Attitude Data
@@ -39,19 +37,15 @@ class Pixhawk:
         self.last_msg_time = None
         
         # Distance to current waypoint
-        self.wp_dist = None  # meters
+        self.wp_dist = None 
 
         # Altitude Stability Tracking
         self.altitude_history = deque(maxlen=10)
 
-        # Battery Status
-        self.battery_voltage = 0.0
-        self.battery_current = 0.0
+        # Waypoint Data
+        self.current_waypoint = {"lat": 0.0, "lon": 0.0, "alt": 0.0}
         self.nav_state = "UNKNOWN"
         
-        # Battery message tracking
-        self.last_battery_msg_time = None
-
 
     # ---------------------------------------------------------
     # CONNECTION & STREAM SETUP
@@ -108,7 +102,7 @@ class Pixhawk:
     # MISSION COUNTING
     # ---------------------------------------------------------
     def request_mission_count(self):
-        """Request the total number of waypoints in the current mission"""
+        """Request the total number of waypoints in the current mission and cache their coordinates"""
         self.master.mav.mission_request_list_send(
             self.master.target_system,
             self.master.target_component
@@ -130,6 +124,25 @@ class Pixhawk:
             return self.mission_count - 1
         return None
 
+    def request_mission_waypoints(self):
+        """Request all waypoints and cache their coordinates."""
+        if self.mission_count is None:
+            self.request_mission_count()
+        
+        self.mission_waypoints = []
+        for i in range(self.mission_count):
+            self.master.mav.mission_request_send(
+                self.master.target_system,
+                self.master.target_component,
+                i
+            )
+            msg = self.master.recv_match(type='MISSION_ITEM', blocking=True, timeout=5)
+            if msg:
+                self.mission_waypoints.append({
+                    "lat": msg.x,
+                    "lon": msg.y,
+                    "alt": msg.z
+                })
 
     # ---------------------------------------------------------
     # TELEMETRY UPDATE LOOP
@@ -188,6 +201,15 @@ class Pixhawk:
                         logger.debug(f"> Waypoint changed: {self.last_wp} -> {new_wp}")
                         self.last_wp = new_wp
 
+                        # Fetch waypoint coordinates from mission (if mission cached)
+                        if hasattr(self, "mission_waypoints") and new_wp < len(self.mission_waypoints):
+                            wp = self.mission_waypoints[new_wp]
+                            self.current_waypoint = {
+                                "lat": wp["lat"],
+                                "lon": wp["lon"],
+                                "alt": wp["alt"]
+                            }
+
             # -------------------------------
             # HEARTBEAT (MODE + ARM)
             # -------------------------------
@@ -208,27 +230,6 @@ class Pixhawk:
                     "z": msg.zacc / 1000.0 * 9.81
                 }
 
-            # -------------------------------
-            # BATTERY
-            # -------------------------------
-            elif msg_type == "BATTERY_STATUS":
-                self.last_battery_msg_time = time.time()
-                
-                # Update voltage
-                if msg.voltages and len(msg.voltages) > 0:
-                    self.battery_voltage = msg.voltages[0] / 1000.0  # mV to V
-                
-                # Update current
-                if msg.current_battery != -1:
-                    self.battery_current = msg.current_battery / 100.0  # cA to A
-                
-                # Update percentage
-                if msg.battery_remaining != -1:
-                    self.battery_remaining = msg.battery_remaining
-                
-                # logger.debug(f"Battery: {self.battery_remaining}%, "
-                #            f"{self.battery_voltage:.2f}V, "
-                #            f"{self.battery_current:.2f}A")
 
     # ---------------------------------------------------------
     # Attitude Getters (for gimbal)
@@ -248,7 +249,7 @@ class Pixhawk:
     # ---------------------------------------------------------
     # Stability Detection Methods
     # ---------------------------------------------------------
-    def is_hovering(self, threshold=0.5):
+    def is_hovering(self, threshold=config.HOVER_SPEED_THRESHOLD):
         """Check if drone is hovering (horizontal velocity < threshold m/s)"""
         return self.groundspeed < threshold
     
@@ -278,24 +279,6 @@ class Pixhawk:
         self.altitude_history.clear()
         logger.debug("✓ Cleared waypoint & altitude history.")
 
-    # ---------------------------------------------------------
-    # Battery Health Check
-    # ---------------------------------------------------------
-    def battery_data_ok(self, timeout=5.0):
-        """Returns False if battery data is stale or unavailable"""
-        if self.last_battery_msg_time is None:
-            return False
-        return (time.time() - self.last_battery_msg_time) < timeout
-    
-    def get_battery_status(self):
-        """Get current battery status as a dict"""
-        return {
-            "voltage": self.battery_voltage,
-            "current": self.battery_current,
-            "percentage": self.battery_remaining,
-            "type": self.battery_type,
-            "data_age": time.time() - self.last_battery_msg_time if self.last_battery_msg_time else None
-        }
 
     # ---------------------------------------------------------
     # SAFETY / HEALTH

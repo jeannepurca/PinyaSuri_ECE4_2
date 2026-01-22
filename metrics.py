@@ -82,10 +82,11 @@ class FlightMetricsLogger:
                     "waypoint_index",
                     "waypoint_lat_deg", "waypoint_lon_deg", "waypoint_alt_m",
                     "flight_mode",
+                    "nav_state",
                     "is_hovering",
-                    "battery_voltage_V",
-                    "battery_current_A",
-                    "battery_percentage"
+                    "flight_start_utc",
+                    "flight_end_utc",
+                    "flight_duration_sec"
                 ])
             logger.info("✓ Created raw flight CSV")
         except FileExistsError:
@@ -94,14 +95,14 @@ class FlightMetricsLogger:
     # Call when the drone arms
     def start_flight(self):
         self.armed = True
-        self.flight_start_time = datetime.utcnow().isoformat()
+        self.flight_start_time = datetime.now()
         self.flight_id = self._generate_flight_id()
         logger.info(f"🛫 Flight {self.flight_id} started at {self.flight_start_time}.")
 
     # Call when the drone disarms
     def end_flight(self):
         self.armed = False
-        self.flight_end_time = datetime.utcnow().isoformat()
+        self.flight_end_time = datetime.now()
         logger.info(f"🛬 Flight {self.flight_id} ended at {self.flight_end_time}.")
 
         # Increment flight number for next flight
@@ -138,11 +139,14 @@ class FlightMetricsLogger:
 
         # Flight state
         flight_mode = data.get("flight_mode", "UNKNOWN")
+        nav_state = data.get("nav_state", "UNKNOWN")
 
-        # Battery - handle None values properly
-        battery_voltage = data.get("battery", {}).get("voltage", 0.0) or 0.0
-        battery_current = data.get("battery", {}).get("current", 0.0) or 0.0
-        battery_percent = data.get("battery", {}).get("percentage") or 0.0
+        duration_sec = 0.0
+        if self.flight_start_time and self.flight_end_time:
+            duration_sec = (self.flight_end_time - self.flight_start_time).total_seconds()
+        elif self.flight_start_time:
+            # Flight is still ongoing, calculate duration from start to now
+            duration_sec = (datetime.now() - self.flight_start_time).total_seconds()
 
         # Write telemetry row
         with open(self.csv_file, "a", newline="") as f:
@@ -158,8 +162,9 @@ class FlightMetricsLogger:
                 wp_index,
                 round(wp_lat, 7), round(wp_lon, 7), round(wp_alt, 2),
                 flight_mode,
+                nav_state,
                 data.get("is_hovering", False),
-                round(battery_voltage, 2),
-                round(battery_current, 2),
-                round(battery_percent, 1)
+                self.flight_start_time.isoformat() if self.flight_start_time else "",
+                self.flight_end_time.isoformat() if self.flight_end_time else "",
+                round(duration_sec, 1)
             ])
