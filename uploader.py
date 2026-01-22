@@ -236,6 +236,7 @@ class UploadQueue:
         
         self.uploaded_files = set()
         self._load_upload_history()
+        self.upload_lock = threading.Lock()
     
     def _load_upload_history(self):
         """Load history of successfully uploaded files"""
@@ -276,14 +277,15 @@ class UploadQueue:
         if self.worker_thread:
             self.worker_thread.join(timeout=5)
         logger.info("⚠ Upload queue worker stopped")
-    
+
     def add_json(self, json_path):
         """Add JSON file to upload queue"""
-        if str(json_path) not in self.uploaded_files:
-            self.upload_queue.put(("json", json_path))
-            self.stats["json_queued"] += 1
-            logger.debug(f"📥 Queued JSON: {Path(json_path).name}")
-    
+        with self.upload_lock:
+            if str(json_path) not in self.uploaded_files:
+                self.upload_queue.put(("json", json_path))
+                self.stats["json_queued"] += 1
+                logger.debug(f"📥 Queued JSON: {Path(json_path).name}")
+
     def add_image(self, image_path):
         """Add image file to upload queue"""
         if str(image_path) not in self.uploaded_files:

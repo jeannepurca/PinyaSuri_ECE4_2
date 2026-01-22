@@ -151,7 +151,7 @@ class Camera:
             )
             
             # Draw label background (filled rectangle)
-            label_y = y1 - 10 if y1 - 10 > text_height else y1 + text_height + 10
+            label_y = y1 - 10 if y1 > text_height + 10 else y2 + text_height + 10
             cv2.rectangle(
                 frame,
                 (x1, label_y - text_height - baseline),

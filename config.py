@@ -145,17 +145,6 @@ CLASS_COLORS = {
 }
 
 def get_class_name(index: int, class_names: dict = None) -> str:
-    """
-    Get class name from index
-    
-    Args:
-        index: Class index
-        class_names: Optional dictionary of class names (from model metadata)
-                    If None, uses CLASS_NAMES
-    
-    Returns:
-        Class name string
-    """
     names = class_names if class_names is not None else CLASS_NAMES
     return names.get(index, f"unknown_{index}")
 

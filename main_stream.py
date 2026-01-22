@@ -73,6 +73,11 @@ def initialize_detection_csv():
 def log_detections(flight_id, flight_number, waypoint, position, burst_id, burst_index, 
                    detections, image_path, logger):
     """Log all detections from a single frame to CSV"""
+
+    if position is None:
+        logger.warning("⚠️ No position data, cannot log detections")
+        return
+
     try:
         with open(config.CLASSIFICATION_CSV, "a", newline="") as f:
             writer = csv.writer(f)
@@ -118,6 +123,11 @@ def log_detections(flight_id, flight_number, waypoint, position, burst_id, burst
 def handle_waypoint_streaming_detection(pixhawk, camera, classifier, metrics, waypoint, 
                                         flight_number, captured_wp, logger):
     """Stream frames and detect objects in real-time at waypoint"""
+
+    if classifier is None:
+        logger.error("⚠️ Classifier not available, skipping detection")
+        return False
+
     if waypoint in captured_wp:
         return False
         
